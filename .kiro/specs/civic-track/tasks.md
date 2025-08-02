@@ -177,7 +177,7 @@
   - Implement responsive design for mobile devices
   - _Requirements: 4.1, 4.2, 4.4, 5.1, 8.1_
 
-- [ ] 14. Add real-time notifications with WebSockets
+- [x] 14. Add real-time notifications with WebSockets
   - Set up Socket.io server for real-time communication
   - Create notification service for status updates
   - Implement WebSocket client connection in React
@@ -186,7 +186,7 @@
   - Add email notification integration
   - _Requirements: 4.3, 8.3_
 
-- [ ] 15. Build admin interface
+- [x] 15. Build admin interface
   - Create admin login and dashboard pages
   - Build flagged content review interface
   - Implement user management tools

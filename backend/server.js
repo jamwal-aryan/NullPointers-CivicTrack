@@ -2,13 +2,48 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const http = require('http');
+const socketIo = require('socket.io');
 require('dotenv').config();
 
 // Import database models
 const { initializeDatabase } = require('./models');
 
 const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    credentials: true
+  }
+});
+
 const PORT = process.env.PORT || 3001;
+
+// Socket.io connection handling
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+
+  // Join user to their personal room for notifications
+  socket.on('join-user', (userId) => {
+    socket.join(`user-${userId}`);
+    console.log(`User ${userId} joined their notification room`);
+  });
+
+  // Join admin to admin room
+  socket.on('join-admin', () => {
+    socket.join('admin-room');
+    console.log('Admin joined admin room');
+  });
+
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+// Make io available to other modules
+app.set('io', io);
 
 // Security middleware
 app.use(helmet());
@@ -78,8 +113,9 @@ const startServer = async () => {
       process.exit(1);
     }
     
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`CivicTrack backend server running on port ${PORT}`);
+      console.log('WebSocket server initialized');
       console.log('Database initialized and models synchronized.');
     });
   } catch (error) {
@@ -91,4 +127,4 @@ const startServer = async () => {
 // Start the server
 startServer();
 
-module.exports = app;
+module.exports = { app, server, io };

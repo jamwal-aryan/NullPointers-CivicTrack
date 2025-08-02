@@ -118,6 +118,13 @@ class IssueController {
         
         await transaction.commit();
         
+        // Send notification for new issue
+        const io = req.app.get('io');
+        if (io) {
+          const notificationService = new NotificationService(io);
+          await notificationService.notifyNewIssue(issue.id);
+        }
+        
         // Fetch the created issue with formatted response
         const createdIssue = await Issue.findByPk(issue.id, {
         attributes: [
@@ -622,13 +629,16 @@ class IssueController {
         });
         
         // Send notification to reporter about status change
-        await NotificationService.notifyStatusChange(
-          issue.id,
-          issue.status,
-          status,
-          comment.trim(),
-          req.user.id
-        );
+        const io = req.app.get('io');
+        if (io) {
+          const notificationService = new NotificationService(io);
+          await notificationService.notifyStatusChange(
+            issue.id,
+            issue.status,
+            status,
+            req.user.id
+          );
+        }
         
       } catch (error) {
         await transaction.rollback();
@@ -722,6 +732,13 @@ class IssueController {
             timestamp: new Date().toISOString()
           }
         });
+      }
+      
+      // Send notification for flagged issue
+      const io = req.app.get('io');
+      if (io) {
+        const notificationService = new NotificationService(io);
+        await notificationService.notifyIssueFlagged(id, reason);
       }
       
       res.status(201).json({

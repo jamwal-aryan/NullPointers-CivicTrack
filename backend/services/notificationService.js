@@ -1,167 +1,175 @@
-const { User, Issue } = require('../models');
+const { User, Issue, StatusHistory } = require('../models');
 
-/**
- * Notification Service - Handles all notification-related operations
- * This service manages status change notifications and other system notifications
- */
 class NotificationService {
-  
-  /**
-   * Send notification when issue status is updated
-   * @param {string} issueId - The ID of the issue that was updated
-   * @param {string} previousStatus - The previous status
-   * @param {string} newStatus - The new status
-   * @param {string} comment - The comment explaining the status change
-   * @param {string} updatedBy - The ID of the user who updated the status
-   */
-  static async notifyStatusChange(issueId, previousStatus, newStatus, comment, updatedBy) {
+  constructor(io) {
+    this.io = io;
+  }
+
+  // Send notification to specific user
+  async sendToUser(userId, notification) {
     try {
-      // Get issue details with reporter information
-      const issue = await Issue.findByPk(issueId, {
-        attributes: ['id', 'title', 'reporter_id', 'is_anonymous', 'reporter_session'],
-        include: [
-          {
-            model: User,
-            as: 'reporter',
-            attributes: ['id', 'email'],
-            required: false
-          }
-        ]
-      });
-      
-      if (!issue) {
-        console.error('Issue not found for notification:', issueId);
-        return;
-      }
-      
-      // Get the user who made the update
-      const updater = await User.findByPk(updatedBy, {
-        attributes: ['id', 'email', 'role']
-      });
-      
-      // Prepare notification data
-      const notificationData = {
-        issueId: issue.id,
-        issueTitle: issue.title,
-        previousStatus,
-        newStatus,
-        comment,
-        updatedBy: updater ? {
-          id: updater.id,
-          email: updater.email,
-          role: updater.role
-        } : null,
+      this.io.to(`user-${userId}`).emit('notification', {
+        ...notification,
         timestamp: new Date().toISOString()
+      });
+      console.log(`Notification sent to user ${userId}:`, notification.type);
+    } catch (error) {
+      console.error('Error sending notification to user:', error);
+    }
+  }
+
+  // Send notification to all admins
+  async sendToAdmins(notification) {
+    try {
+      this.io.to('admin-room').emit('admin-notification', {
+        ...notification,
+        timestamp: new Date().toISOString()
+      });
+      console.log('Notification sent to admins:', notification.type);
+    } catch (error) {
+      console.error('Error sending notification to admins:', error);
+    }
+  }
+
+  // Notify when issue status changes
+  async notifyStatusChange(issueId, oldStatus, newStatus, updatedBy) {
+    try {
+      const issue = await Issue.findByPk(issueId, {
+        include: [{ model: User, as: 'reporter' }]
+      });
+
+      if (!issue) return;
+
+      const statusLabels = {
+        'reported': 'Reported',
+        'under_review': 'Under Review',
+        'in_progress': 'In Progress',
+        'resolved': 'Resolved',
+        'rejected': 'Rejected'
       };
-      
-      // Send notification to reporter if not anonymous
-      if (!issue.is_anonymous && issue.reporter) {
-        await this.sendEmailNotification(issue.reporter.email, notificationData);
-        console.log(`Status change notification sent to reporter: ${issue.reporter.email}`);
+
+      const notification = {
+        type: 'status_change',
+        title: 'Issue Status Updated',
+        message: `Issue "${issue.title}" status changed from ${statusLabels[oldStatus]} to ${statusLabels[newStatus]}`,
+        issueId: issue.id,
+        oldStatus,
+        newStatus,
+        updatedBy
+      };
+
+      // Notify the issue reporter
+      if (issue.reporterId && issue.reporterId !== updatedBy) {
+        await this.sendToUser(issue.reporterId, notification);
       }
-      
-      // TODO: Implement WebSocket real-time notifications
-      // await this.sendWebSocketNotification(issue.reporter_id, notificationData);
-      
-      // TODO: Implement push notifications for PWA
-      // await this.sendPushNotification(issue.reporter_id, notificationData);
-      
-      console.log(`Status change notification processed for issue ${issueId}: ${previousStatus} -> ${newStatus}`);
-      
+
+      // Notify admins
+      await this.sendToAdmins({
+        ...notification,
+        type: 'admin_status_change'
+      });
+
     } catch (error) {
-      console.error('Error sending status change notification:', error);
-      // Don't throw error to avoid breaking the main status update flow
+      console.error('Error notifying status change:', error);
     }
   }
-  
-  /**
-   * Send email notification for status change
-   * @param {string} email - Recipient email address
-   * @param {Object} notificationData - Notification details
-   */
-  static async sendEmailNotification(email, notificationData) {
+
+  // Notify when new issue is reported
+  async notifyNewIssue(issueId) {
     try {
-      // TODO: Implement actual email sending using a service like SendGrid, AWS SES, etc.
-      // For now, we'll just log the notification
-      
-      const emailContent = {
-        to: email,
-        subject: `CivicTrack: Issue Status Updated - ${notificationData.issueTitle}`,
-        body: `
-          Your reported issue has been updated:
-          
-          Issue: ${notificationData.issueTitle}
-          Status changed from: ${notificationData.previousStatus || 'N/A'} to ${notificationData.newStatus}
-          
-          Update comment: ${notificationData.comment}
-          
-          Updated by: ${notificationData.updatedBy?.role || 'System'} (${notificationData.updatedBy?.email || 'N/A'})
-          
-          Time: ${notificationData.timestamp}
-          
-          You can view the full issue details and history in the CivicTrack app.
-        `
+      const issue = await Issue.findByPk(issueId, {
+        include: [{ model: User, as: 'reporter' }]
+      });
+
+      if (!issue) return;
+
+      const notification = {
+        type: 'new_issue',
+        title: 'New Issue Reported',
+        message: `New issue reported: "${issue.title}"`,
+        issueId: issue.id,
+        category: issue.category,
+        location: {
+          latitude: issue.latitude,
+          longitude: issue.longitude
+        }
       };
-      
-      console.log('Email notification prepared:', emailContent);
-      
-      // TODO: Replace with actual email service implementation
-      // await emailService.send(emailContent);
-      
+
+      // Notify admins
+      await this.sendToAdmins({
+        ...notification,
+        type: 'admin_new_issue'
+      });
+
     } catch (error) {
-      console.error('Error sending email notification:', error);
+      console.error('Error notifying new issue:', error);
     }
   }
-  
-  /**
-   * Send WebSocket real-time notification
-   * @param {string} userId - User ID to send notification to
-   * @param {Object} notificationData - Notification details
-   */
-  static async sendWebSocketNotification(userId, notificationData) {
+
+  // Notify when issue is flagged
+  async notifyIssueFlagged(issueId, flagReason) {
     try {
-      // TODO: Implement WebSocket notification using Socket.io
-      // This will be implemented in the real-time notifications task
-      
-      console.log(`WebSocket notification prepared for user ${userId}:`, notificationData);
-      
+      const issue = await Issue.findByPk(issueId);
+
+      if (!issue) return;
+
+      const notification = {
+        type: 'issue_flagged',
+        title: 'Issue Flagged',
+        message: `Issue "${issue.title}" has been flagged for review`,
+        issueId: issue.id,
+        flagReason
+      };
+
+      // Notify admins
+      await this.sendToAdmins({
+        ...notification,
+        type: 'admin_issue_flagged'
+      });
+
     } catch (error) {
-      console.error('Error sending WebSocket notification:', error);
+      console.error('Error notifying issue flagged:', error);
     }
   }
-  
-  /**
-   * Send push notification for PWA
-   * @param {string} userId - User ID to send notification to
-   * @param {Object} notificationData - Notification details
-   */
-  static async sendPushNotification(userId, notificationData) {
+
+  // Notify when user is banned/unbanned
+  async notifyUserBanStatus(userId, isBanned, reason) {
     try {
-      // TODO: Implement push notifications for PWA
-      // This will be implemented in the PWA features task
-      
-      console.log(`Push notification prepared for user ${userId}:`, notificationData);
-      
+      const user = await User.findByPk(userId);
+
+      if (!user) return;
+
+      const notification = {
+        type: isBanned ? 'user_banned' : 'user_unbanned',
+        title: isBanned ? 'Account Suspended' : 'Account Restored',
+        message: isBanned 
+          ? `Your account has been suspended: ${reason}`
+          : 'Your account has been restored',
+        userId: user.id,
+        reason: isBanned ? reason : null
+      };
+
+      // Notify the user
+      await this.sendToUser(userId, notification);
+
     } catch (error) {
-      console.error('Error sending push notification:', error);
+      console.error('Error notifying user ban status:', error);
     }
   }
-  
-  /**
-   * Notify about flagged content (for admin notifications)
-   * @param {string} issueId - The ID of the flagged issue
-   * @param {string} flaggedBy - The ID of the user who flagged the issue
-   * @param {string} reason - The reason for flagging
-   */
-  static async notifyFlaggedContent(issueId, flaggedBy, reason) {
+
+  // Send system notification to all users
+  async sendSystemNotification(message, type = 'info') {
     try {
-      // TODO: Implement admin notification for flagged content
-      // This will be implemented in the content flagging task
-      
-      console.log(`Flagged content notification prepared for issue ${issueId}`);
-      
+      this.io.emit('system-notification', {
+        type: 'system',
+        title: 'System Notification',
+        message,
+        notificationType: type,
+        timestamp: new Date().toISOString()
+      });
+      console.log('System notification sent:', message);
     } catch (error) {
-      console.error('Error sending flagged content notification:', error);
+      console.error('Error sending system notification:', error);
     }
   }
 }
